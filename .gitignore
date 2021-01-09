@@ -39,7 +39,9 @@ vignettes/*.pdf
 .Renviron
 
 # Miscellaneous
-*.csv
-*.xlsx
+# *.csv
+# *.xlsx
 *.html
 *.DS_Store
+*.png
+*.jpg
