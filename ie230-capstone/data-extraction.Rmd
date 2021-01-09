@@ -1,0 +1,148 @@
+---
+title: "IE 230: Google Maps API Data Extraction for a Factorial Experiment"
+author: "Lino Licuanan"
+date: "12/29/2020"
+output: html_document
+---
+
+# Background
+
+We were asked to conduct a simple full factorial experiment on a topic of interest. Our chosen experiment was duration in traffic, with factors being hour of day, day of week, week of month, and month of year.
+
+Showing here the methodology to collect that information through `[googleway](https://github.com/SymbolixAU/googleway)`, a pretty handy R package for transacting with Google APIs for Places, Distance Matrix, Geocoding, and a couple other ones I didn't use.
+
+# Data Extraction
+
+Locations being used are a small sample of Ayala malls. As for the factor levels, setting it to the bare minimum because I'm too cheap for Google Cloud Platform lol.
+
+```{r}
+# Loading libraries
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(magrittr)
+  library(lubridate)
+  library(googleway)
+  library(googlesheets4)
+  library(glue)
+})
+
+# Authenticating google services
+gs4_auth(email = "linolicuanan@gmail.com")
+set_key(Sys.getenv("GCP_GEOCODING_API_KEY"))
+
+# Utility functions
+parameter_set <- function(months, weeks, days, hours) {
+  crossing(
+    add_month_of_year = seq(0, 11, by = months),
+    add_week_of_month = seq(0, 3,  by = weeks),
+    add_day_of_week   = seq(0, 6,  by = days),
+    add_hour_of_day   = seq(0, 23, by = hours)
+  )
+}
+
+# Globals
+# ayala_mall_sample_size <- 20
+selected_malls <- c("Ayala Malls The 30th", 
+                    "Glorietta by Ayala Malls", 
+                    "Ayala Malls Feliz", 
+                    "Ayala Malls TriNoma")
+
+reference_date <- Sys.Date() + days(1)
+
+# Getting ayala mall attributes
+dim_ayala_mall.dt <- google_places(search_string = "ayala") %$% 
+  results %>% as_tibble %>% 
+  filter(name %in% selected_malls) %>% 
+  mutate(id = row_number()) %>% 
+  relocate(id)
+
+# Getting pairwise distance matrix responses
+test_parameter_set <- parameter_set(months = 12, weeks = 4, days = 7, hours = 24)
+
+fact_ayala_matrix.dt <- test_parameter_set %>% 
+  mutate(
+    matrix_response = pmap_dfr(
+      list(add_month_of_year, add_week_of_month, add_day_of_week, add_hour_of_day),
+      function(add_month_of_year, add_week_of_month, add_day_of_week, add_hour_of_day) {
+        try({
+          output <-
+            dim_ayala_mall.dt %$% 
+            geometry %$% location %>% as_tibble %>% 
+            transmute(geocode = map2(lat, lng, c)) %>% 
+            pull %>% as.list %>% 
+            google_distance(
+              origins = ., 
+              destinations = .,
+              departure_time = as_datetime(
+                reference_date + months(add_month_of_year) + weeks(add_week_of_month) +
+                  days(add_day_of_week) + hours(add_hour_of_day)
+              ),
+              mode = "driving",
+              traffic_model = "pessimistic"
+            ) %$%
+            rows %$% elements %>% 
+            enframe %>% unnest(value) %>% 
+            transmute(
+              origin_id  = name,
+              distance_m = distance$value,
+              duration_s = duration$value,
+              duration_in_traffic_s = duration_in_traffic$value
+            ) %>% 
+            group_by(origin_id) %>% 
+            mutate(
+              destination_id = row_number(), 
+              departure_time = reference_date + months(add_month_of_year) + 
+                weeks(add_week_of_month) + days(add_day_of_week) + hours(add_hour_of_day)
+            ) %>% 
+            ungroup() %>% 
+            mutate(
+              month_of_year = month(departure_time),
+              week_of_month = ceiling(day(departure_time)/7),
+              day_of_week   = wday(departure_time),
+              hour_of_day   = hour(departure_time),
+              updated_at    = Sys.time()
+            ) %>% 
+            relocate(origin_id, destination_id, departure_time, 
+                     month_of_year, week_of_month, day_of_week, hour_of_day) %>% 
+            nest
+        })
+      }
+    )
+  ) %>% 
+  unnest(matrix_response) %>% unnest %>% 
+  select(-starts_with("add"))
+
+dim_ayala_mall.dt %>% 
+  transmute(
+    id, name, rating, business_status, formatted_address, 
+    lat = geometry$location$lat, lng = geometry$location$lng
+  ) %>% 
+  sheet_write(
+    ss = "1XpwhUN5iWTHBRPdqVCNutRtCXbQnolD7_33GCIPJGi0", 
+    sheet = "dim_ayala_mall"
+  )
+
+fact_ayala_matrix.dt %>% 
+  group_by(origin_id, destination_id, departure_time) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  filter(origin_id != destination_id) %>% 
+  sheet_write(
+    ss = "1XpwhUN5iWTHBRPdqVCNutRtCXbQnolD7_33GCIPJGi0", 
+    # sheet = "fact_ayala_matrix"
+    sheet = "dev.fact_ayala_matrix"
+  )
+```
+
+# Simple Exploratory Analysis
+
+```{r, fig.align='center'}
+fact_ayala_matrix.dt %>% 
+  group_by(origin_id, destination_id, departure_time) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  filter(origin_id != destination_id) %>% 
+  ggplot(aes(x = distance_m, y = duration_in_traffic_s, colour = hour_of_day)) +
+  geom_point()
+```
+
