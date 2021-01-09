@@ -43,5 +43,5 @@ vignettes/*.pdf
 # *.xlsx
 *.html
 *.DS_Store
-*.png
-*.jpg
+# *.png
+# *.jpg
