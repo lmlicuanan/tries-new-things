@@ -1,0 +1,49 @@
+---
+title: "PH Tax Burden"
+author: "Lino Licuanan"
+date: "1/16/2021"
+output: rmarkdown::github_document
+---
+
+### Just simple proof that the tax burden from TRAIN Law is linear. 
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(googlesheets4)  
+})
+
+gs4_auth()
+
+tax_schedule.dt <- sheets_read(
+  "1opVXXj3fUHkRBizN5-NrnfNQQPe5076fFYocLk36948", 
+  sheet = "Tax Schedule"
+) %>%
+  mutate(max = as.numeric(max))
+
+print(tax_schedule.dt)
+```
+
+```{r}
+take_home_php.dt <- seq(250000, 16000000, by = 50000) %>% 
+  as_tibble %>% 
+  rename(base_comp_php = value) %>% 
+  mutate(
+    tax_burden = pmap(
+      list(base_comp_php),
+      function(base_comp_php) {
+        tax_schedule.dt %>% 
+          filter(base_comp_php >= min, base_comp_php < max) %>% 
+          summarise(
+            variable_php = (base_comp_php - min) * variable,
+            lump_sum_php = lump_sum
+          )
+      }
+    )
+  ) %>% unnest(tax_burden) %>% 
+  mutate(take_home_php = base_comp_php - lump_sum_php - variable_php)
+
+take_home_php.dt %>% 
+  ggplot(aes(x = base_comp_php, y = take_home_php)) +
+  geom_point()
+```
