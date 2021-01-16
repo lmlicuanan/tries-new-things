@@ -10,7 +10,7 @@ app_ui <- function(request) {
     golem_add_external_resources(),
     # List the first level UI elements here 
     fluidPage(
-      h1("noticeme")
+      mod_request_attention_ui("hist1")
     )
   )
 }
@@ -23,7 +23,7 @@ app_ui <- function(request) {
 #' @import shiny
 #' @importFrom golem add_resource_path activate_js favicon bundle_resources
 #' @noRd
-golem_add_external_resources <- function(){
+golem_add_external_resources <- function() {
   
   add_resource_path(
     'www', app_sys('app/www')
