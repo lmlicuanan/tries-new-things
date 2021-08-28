@@ -25,7 +25,7 @@ print(tax_schedule.dt)
 ```
 
 ```{r}
-take_home_php.dt <- seq(250000, 16000000, by = 50000) %>% 
+take_home_php.dt <- seq(250000, 16000000, by = 10000) %>% 
   as_tibble %>% 
   rename(base_comp_php = value) %>% 
   mutate(
