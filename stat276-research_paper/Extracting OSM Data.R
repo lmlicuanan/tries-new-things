@@ -31,7 +31,7 @@ building.sf <- building.ql %>% osmdata_sf()
 road.sf     <- road.ql %>% osmdata_sf()
 boundary.sf <- boundary.ql %>% osmdata_sf()
 amenity.sf  <- amenity.ql %>% osmdata_sf()
-mc_point.sf <- st_as_sf(st_sample(building.sf$osm_polygons, 100))
+mc_point.sf <- st_as_sf(st_sample(building.sf$osm_polygons, 1000))
 
 mc_point_params.sf <- aggregate(
   amenity.sf$osm_points %>% 
@@ -39,7 +39,7 @@ mc_point_params.sf <- aggregate(
     transmute(nearby_banks = 1),
   mc_point.sf,
   FUN = sum,
-  join = function(x, y) st_is_within_distance(x, y, dist = 1000)
+  join = function(x, y) st_is_within_distance(x, y, dist = 500)
 ) 
 
 ggplot() +
