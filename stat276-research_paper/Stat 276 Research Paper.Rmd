@@ -1,0 +1,10 @@
+---
+title: "Stat 276 Research Paper"
+author: "Lino Licuanan"
+date: "12/28/2021"
+output: html_document
+---
+
+```{r}
+
+```
