@@ -33,21 +33,42 @@ boundary.sf <- boundary.ql %>% osmdata_sf()
 amenity.sf  <- amenity.ql %>% osmdata_sf()
 mc_point.sf <- st_as_sf(st_sample(building.sf$osm_polygons, 1000))
 
+amenity_point.sf <- amenity.sf$osm_points %>% 
+  transmute(
+    amenity = case_when(
+      amenity == "bank" ~ "bank",
+      amenity %in% c("bar", "pub", "gambling", "nightclub", "casino") ~ "restaurant",
+      amenity %in% c("bus_station", "taxi", "ferry_terminal") ~ "terminal",
+      amenity %in% c("clinic", "hospital", "doctors", "dentist") ~ "hc_facility",
+      amenity == "pharmacy" ~ "pharmacy",
+      amenity %in% c("school", "college") ~ "school",
+      amenity == "place_of_worship" ~ "place_of_worship",
+      TRUE ~ NA_character_
+    ), value = TRUE
+  ) %>% mutate(amenity_key = amenity) %>% 
+  filter(!is.na(amenity)) %>% spread(key = amenity_key, value = value)
+
+ggplot() + 
+  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity_point.sf, aes(group = amenity, colour = amenity, size = 1)) +
+  scale_colour_viridis_d() +
+  scale_size_continuous(guide = "none")
+
 mc_point_params.sf <- aggregate(
-  amenity.sf$osm_points %>% 
-    filter(amenity == "bank") %>% 
-    transmute(nearby_banks = 1),
+  amenity_point.sf,
   mc_point.sf,
-  FUN = sum,
+  FUN = function(x) sum(x, na.rm = TRUE),
   join = function(x, y) st_is_within_distance(x, y, dist = 500)
-) 
+)
 
 ggplot() +
   # geom_sf(data = boundary.sf$osm_multipolygons) +
   geom_sf(data = building.sf$osm_polygons) +
   geom_sf(data = road.sf$osm_lines) +
   geom_sf(data = amenity.sf$osm_points %>% filter(amenity == "bank"), col = "red") +
-  geom_sf(data = mc_point_params.sf, aes(colour = nearby_banks, size = nearby_banks)) +
+  geom_sf(data = mc_point_params.sf, aes(colour = bank, size = bank)) +
   scale_colour_viridis_c() +
   scale_size_continuous(guide = "none")
 
