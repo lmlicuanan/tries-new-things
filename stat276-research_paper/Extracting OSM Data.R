@@ -46,7 +46,7 @@ amenity_point.sf <- amenity.sf$osm_points %>%
       TRUE ~ NA_character_
     ), value = TRUE
   ) %>% mutate(amenity_key = amenity) %>% 
-  filter(!is.na(amenity)) %>% spread(key = amenity_key, value = value)
+  filter(!is.na(amenity)) %>% spread(key = amenity_key, value = value, fill = FALSE)
 
 ggplot() + 
   # geom_sf(data = boundary.sf$osm_multipolygons) +
@@ -59,7 +59,7 @@ ggplot() +
 mc_point_params.sf <- aggregate(
   amenity_point.sf,
   mc_point.sf,
-  FUN = function(x) sum(x, na.rm = TRUE),
+  FUN = function(x) sum(as.logical(x), na.rm = TRUE),
   join = function(x, y) st_is_within_distance(x, y, dist = 500)
 )
 
@@ -71,6 +71,14 @@ ggplot() +
   geom_sf(data = mc_point_params.sf, aes(colour = bank, size = bank)) +
   scale_colour_viridis_c() +
   scale_size_continuous(guide = "none")
+
+ggplot() + 
+  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity_point.sf %>% filter(!bank), aes(group = amenity, colour = amenity)) +
+  geom_sf(data = mc_point_params.sf, aes(size = bank), col = "red") +
+  scale_colour_viridis_d()
 
 httr::set_config(httr::config(ssl_verifypeer = TRUE))
 
