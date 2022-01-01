@@ -5,6 +5,132 @@ date: "12/28/2021"
 output: html_document
 ---
 
-```{r}
+## Abstract
 
+With the increasing rate of adoption of fully digital banking over recent years in the Philippines, traditional banks are at high risk of disruption, and with good reason -- digital banks are cheaper to operate and therefore offer higher returns to the average Filipino. Despite this consumer benefit however, the financial ecosystem will never lose a place for physical banking. Traditional banks, therefore, need to operate with greater precision to maximize profitability. The study focused on providing recommendations to bank decision makers on where to strategically place new branches given a certain area's level of economic activity. Operating under the assumption that branch ubiquity is a good proxy for an area being conducive for physical branches, randomly generated points made to measure the number of banks within a 500-meter radius were spatially interpolated across the city of Makati. This was detrended on counts of points of interest. The findings of the study suggest specific points of interest as predictive of conduciveness for branch placement.
+
+## Introduction
+
+## Data and Preprocessing 
+
+```{r, warning=FALSE}
+httr::set_config(httr::config(ssl_verifypeer = FALSE))
+
+suppressPackageStartupMessages({
+  library(osmdata)
+  library(tidyverse)
+  library(sf)
+  library(tmap)
+  library(gstat)
+  library(stars)
+  library(magrittr)
+})
+
+study_region.bb <- getbb("Makati", format_out = "polygon") %>% head(1)
+
+building.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "building")
+
+road.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "highway")
+
+boundary.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "admin_level", value = "10")
+
+amenity.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "amenity")
+
+building.sf     <- building.ql %>% osmdata_sf()
+road.sf         <- road.ql %>% osmdata_sf()
+boundary.sf     <- boundary.ql %>% osmdata_sf()
+amenity.sf      <- amenity.ql %>% osmdata_sf()
+mc_point.sf     <- st_as_sf(st_sample(building.sf$osm_polygons, 1000))
+
+httr::set_config(httr::config(ssl_verifypeer = TRUE))
+
+amenity_point.sf <- amenity.sf$osm_points %>% 
+  transmute(
+    amenity = case_when(
+      amenity == "bank" ~ "bank",
+      amenity %in% c("restaurant", "fast_food") ~ "restaurant",
+      amenity %in% c("bar", "pub", "gambling", "nightclub", "casino") ~ "bar",
+      amenity %in% c("bus_station", "taxi", "ferry_terminal") ~ "terminal",
+      amenity %in% c("clinic", "hospital", "doctors", "dentist") ~ "hc_facility",
+      amenity == "pharmacy" ~ "pharmacy",
+      amenity %in% c("school", "college") ~ "school",
+      amenity == "place_of_worship" ~ "place_of_worship",
+      TRUE ~ NA_character_
+    ), value = TRUE
+  ) %>% mutate(amenity_key = amenity) %>% 
+  filter(!is.na(amenity)) %>% spread(key = amenity_key, value = value, fill = FALSE)
+
+ggplot() + 
+  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity_point.sf, aes(group = amenity, colour = amenity)) +
+  scale_colour_viridis_d() +
+  scale_size_continuous(guide = "none") + 
+  labs(
+    title = "Points of Interest in the City of Makati, Philippines", 
+    caption = "Data from OpenStreetMap"
+  )
 ```
+
+```{r, warning=FALSE}
+mc_point_params.sf <- aggregate(
+  amenity_point.sf,
+  mc_point.sf,
+  FUN = function(x) sum(as.logical(x), na.rm = TRUE),
+  join = function(x, y) st_is_within_distance(x, y, dist = 500)
+) %>% filter(!is.na(amenity))
+
+ggplot() +
+  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity.sf$osm_points %>% filter(amenity == "bank"), col = "red") +
+  geom_sf(data = mc_point_params.sf, aes(colour = bank, size = bank)) +
+  scale_colour_viridis_c() +
+  scale_size_continuous(guide = "none")
+
+ggplot() +
+  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity_point.sf %>% filter(!bank), aes(group = amenity, colour = amenity)) +
+  geom_sf(data = mc_point_params.sf, aes(size = bank), col = "red") +
+  scale_colour_viridis_d()
+```
+
+## Methods
+
+<!-- ```{r, warning=FALSE} -->
+<!-- variogram <- variogram(bank ~ 1, mc_point_params.sf %>% filter(!is.na(bank))) -->
+<!-- variogram.model <- fit.variogram(v, vgm("Sph")) -->
+<!-- variogram.predicted <- variogramLine(v.m, maxdist = max(v$dist)) -->
+
+<!-- ggplot(variogram, aes(x = dist, y = gamma)) + -->
+<!--   geom_point() + -->
+<!--   geom_line(data = variogram.predicted, col = "blue") + -->
+<!--   labs(x = "distance", y = "semivariance") -->
+
+<!-- st_bbox(boundary.sf$osm_multipolygons) %>% -->
+<!--   st_as_stars(dx = 10000) %>% st_crop(study_region.sf$osm_multipolygons) -> tangina -->
+
+<!-- k = krige( -->
+<!--   bank ~ 1, mc_point_params.sf %>% st_set_crs("EPSG:4326"),  -->
+<!--   tangina %>% st_set_crs("EPSG:4326"), variogram.model -->
+<!-- ) -->
+
+<!-- ggplot() + geom_stars(data = k, aes(fill = var1.pred, x = x, y = y)) +  -->
+<!--     geom_sf(data = st_cast(study_region.sf, "MULTILINESTRING")) -->
+<!-- ``` -->
+
+## Results and Discussion
+
+## Conclusions
