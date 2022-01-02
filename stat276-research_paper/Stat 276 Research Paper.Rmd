@@ -14,7 +14,6 @@ With the increasing rate of adoption of fully digital banking over recent years 
 ## Data and Preprocessing 
 
 ```{r, warning=FALSE}
-httr::set_config(httr::config(ssl_verifypeer = FALSE))
 
 suppressPackageStartupMessages({
   library(osmdata)
@@ -24,7 +23,11 @@ suppressPackageStartupMessages({
   library(gstat)
   library(stars)
   library(magrittr)
+  library(ggpubr)
+  library(spdep)
 })
+
+httr::set_config(httr::config(ssl_verifypeer = FALSE))
 
 study_region.bb <- getbb("Makati", format_out = "polygon") %>% head(1)
 
@@ -52,8 +55,12 @@ building.sf     <- building.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb
 road.sf         <- road.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
 boundary.sf     <- boundary.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
 city.sf         <- city.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
-amenity.sf      <- amenity.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
-mc_point.sf     <- st_as_sf(st_sample(building.sf$osm_polygons, 1000))
+
+# left untrimmed to factor in edge correction
+amenity.sf      <- amenity.ql %>% osmdata_sf()
+# only randomly sample in areas where there is a known building
+set.seed(2022)
+mc_point.sf     <- st_as_sf(st_sample(city.sf$osm_multipolygons, 22 * 16))
 
 httr::set_config(httr::config(ssl_verifypeer = TRUE))
 
@@ -74,10 +81,9 @@ amenity_point.sf <- amenity.sf$osm_points %>%
   filter(!is.na(amenity)) %>% spread(key = amenity_key, value = value, fill = FALSE)
 
 ggplot() + 
-  geom_sf(data = boundary.sf$osm_multipolygons) +
   geom_sf(data = building.sf$osm_polygons) +
   geom_sf(data = road.sf$osm_lines) +
-  geom_sf(data = amenity_point.sf, aes(group = amenity, colour = amenity)) +
+  geom_sf(data = amenity_point.sf, aes(group = amenity, colour = amenity), alpha = 0.8) +
   scale_colour_viridis_d() +
   scale_size_continuous(guide = "none") + 
   labs(
@@ -91,23 +97,23 @@ mc_point_params.sf <- aggregate(
   amenity_point.sf,
   mc_point.sf,
   FUN = function(x) sum(as.logical(x), na.rm = TRUE),
-  join = function(x, y) st_is_within_distance(x, y, dist = 300)
+  join = function(x, y) st_is_within_distance(x, y, dist = 250)
 ) %>% filter(!is.na(amenity))
 
 ggplot() +
-  geom_sf(data = boundary.sf$osm_multipolygons) +
   geom_sf(data = building.sf$osm_polygons) +
   geom_sf(data = road.sf$osm_lines) +
-  geom_sf(data = amenity.sf$osm_points %>% filter(amenity == "bank"), col = "red") +
-  geom_sf(data = mc_point_params.sf, aes(colour = bank, size = bank)) +
+  geom_sf(data = amenity.sf$osm_points %>% filter(amenity == "bank"), col = "red", alpha = 0.8) +
+  geom_sf(data = mc_point_params.sf, aes(colour = bank, size = bank, alpha = 0.8)) +
   scale_colour_viridis_c() +
   scale_size_continuous(guide = "none")
 
 ggplot() +
-  geom_sf(data = boundary.sf$osm_multipolygons) +
   geom_sf(data = building.sf$osm_polygons) +
   geom_sf(data = road.sf$osm_lines) +
-  geom_sf(data = amenity_point.sf %>% filter(!bank), aes(group = amenity, colour = amenity)) +
+  geom_sf(data = amenity_point.sf %>% filter(!bank), 
+          aes(group = amenity, colour = amenity),
+          alpha = 0.8) +
   geom_sf(data = mc_point_params.sf, aes(alpha = bank, size = bank), col = "red") +
   scale_colour_viridis_d()
 ```
@@ -115,7 +121,24 @@ ggplot() +
 ## Methods
 
 ```{r, warning=FALSE}
-variogram <- variogram(bank ~ 1, mc_point_params.sf %>% filter(!is.na(bank)))
+city.rs <- city.sf$osm_multipolygons %>% st_rasterize()
+
+city_params.sf <- aggregate(
+  amenity_point.sf,
+  st_as_sf(city.rs),
+  FUN = function(x) sum(as.logical(x), na.rm = TRUE),
+  join = function(x, y) st_is_within_distance(x, y, dist = 250)
+) %>% filter(!is.na(amenity))
+
+city_params_sampled.sf <- city_params.sf %>% st_intersection(mc_point_params.sf)
+
+city_params.rs <- city_params.sf %>% st_rasterize()
+city_params_sampled.rs <- city_params_sampled.sf %>% st_rasterize()
+
+variogram <- variogram(
+  bank ~ restaurant + bar + terminal + hc_facility + pharmacy + school + place_of_worship, 
+  city_params_sampled.sf %>% filter(!is.na(bank))
+)
 variogram.model <- fit.variogram(variogram, vgm("Ste"))
 variogram.predicted <- variogramLine(variogram.model, maxdist = max(variogram$dist))
 
@@ -124,17 +147,74 @@ ggplot(variogram, aes(x = dist, y = gamma)) +
   geom_line(data = variogram.predicted, col = "blue") +
   labs(x = "distance", y = "semivariance")
 
-city.rs <- city.sf$osm_multipolygons %>% st_rasterize()
-
 k = krige(
-  bank ~ 1, mc_point_params.sf %>% st_set_crs("EPSG:4326"),
-  city.rs %>% st_set_crs("EPSG:4326"), variogram.model
+  bank ~ restaurant + bar + terminal + hc_facility + pharmacy + school + place_of_worship, 
+  city_params_sampled.sf %>% st_set_crs("EPSG:4326"),
+  city_params.rs %>% st_set_crs("EPSG:4326"), variogram.model
 )
 
-ggplot() + geom_stars(data = k, aes(fill = var1.pred, x = x, y = y)) +
-  geom_sf(data = st_cast(city.sf$osm_multipolygons, "MULTILINESTRING"))
 ```
 
 ## Results and Discussion
+
+```{r}
+predicted <- ggplot() + 
+  geom_stars(data = k %>% mutate(bank = var1.pred), aes(fill = bank, x = x, y = y)) +
+  scale_fill_continuous(na.value = NA, low = "dark blue", high = "red") +
+  lims(x = c(120.9987708, 121.0675029), y = c(14.5296336, 14.5794322)) +
+  labs(subtitle = "Predicted")
+
+predicted.var <- ggplot() + 
+  geom_stars(data = k %>% mutate(bank = var1.var), aes(fill = bank, x = x, y = y)) +
+  scale_fill_continuous(na.value = NA, low = "dark blue", high = "red") +
+  lims(x = c(120.9987708, 121.0675029), y = c(14.5296336, 14.5794322)) +
+  labs(subtitle = "Predicted")
+
+actual <- ggplot() + 
+  geom_stars(data = city_params.rs, aes(fill = bank, x = x, y = y)) +
+  scale_fill_continuous(na.value = NA, low = "dark blue", high = "red") +
+  lims(x = c(120.9987708, 121.0675029), y = c(14.5296336, 14.5794322)) + 
+  labs(subtitle = "Actual")
+
+theme <- theme(
+  axis.text.x  = element_blank(),
+  axis.text.y  = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+)
+
+ggarrange(
+  predicted + theme, actual + theme,
+  ncol = 2, nrow = 1,
+  font.label = list(size = 8),
+  common.legend = TRUE,
+  legend = "bottom"
+) %>% 
+  annotate_figure(
+    top = text_grob(
+      "Banks Ubiquity in the city of Makati, Philippines", 
+      face = "bold", size = 9
+    ))
+
+predicted.dt <- k %>% as_tibble() %>% 
+  filter(!is.na(var1.pred)) %>% 
+  mutate(predicted = var1.pred)
+actual.dt <- city_params.rs %>% as_tibble() %>% 
+  filter(!is.na(bank)) %>% 
+  mutate(actual = bank)
+evaluation.dt <- predicted.dt %>% 
+  inner_join(actual.dt, by = c("x" = "x", "y" = "y"))
+
+evaluation.dt %>% 
+  mutate(se = (actual - predicted)^2) %>% 
+  summarise(sqrt(mean(x)))
+
+ggplot(evaluation.dt) + geom_histogram(aes(actual), binwidth = 1)
+
+mean(evaluation.dt$actual) - mean(evaluation.dt$predicted)
+```
+
 
 ## Conclusions
