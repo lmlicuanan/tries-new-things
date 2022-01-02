@@ -121,23 +121,9 @@ ggplot() +
 ## Methods
 
 ```{r, warning=FALSE}
-city.rs <- city.sf$osm_multipolygons %>% st_rasterize()
-
-city_params.sf <- aggregate(
-  amenity_point.sf,
-  st_as_sf(city.rs),
-  FUN = function(x) sum(as.logical(x), na.rm = TRUE),
-  join = function(x, y) st_is_within_distance(x, y, dist = 250)
-) %>% filter(!is.na(amenity))
-
-city_params_sampled.sf <- city_params.sf %>% st_intersection(mc_point_params.sf)
-
-city_params.rs <- city_params.sf %>% st_rasterize()
-city_params_sampled.rs <- city_params_sampled.sf %>% st_rasterize()
-
 variogram <- variogram(
   bank ~ restaurant + bar + terminal + hc_facility + pharmacy + school + place_of_worship, 
-  city_params_sampled.sf %>% filter(!is.na(bank))
+  mc_point_params.sf %>% filter(!is.na(bank))
 )
 variogram.model <- fit.variogram(variogram, vgm("Ste"))
 variogram.predicted <- variogramLine(variogram.model, maxdist = max(variogram$dist))
@@ -147,9 +133,20 @@ ggplot(variogram, aes(x = dist, y = gamma)) +
   geom_line(data = variogram.predicted, col = "blue") +
   labs(x = "distance", y = "semivariance")
 
+city.rs <- city.sf$osm_multipolygons %>% st_rasterize()
+
+city_params.sf <- aggregate(
+  amenity_point.sf,
+  st_as_sf(city.rs),
+  FUN = function(x) sum(as.logical(x), na.rm = TRUE),
+  join = function(x, y) st_is_within_distance(x, y, dist = 250)
+) %>% filter(!is.na(amenity))
+
+city_params.rs <- city_params.sf %>% st_rasterize()
+
 k = krige(
   bank ~ restaurant + bar + terminal + hc_facility + pharmacy + school + place_of_worship, 
-  city_params_sampled.sf %>% st_set_crs("EPSG:4326"),
+  mc_point_params.sf %>% st_set_crs("EPSG:4326"),
   city_params.rs %>% st_set_crs("EPSG:4326"), variogram.model
 )
 
