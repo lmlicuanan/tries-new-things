@@ -36,6 +36,10 @@ road.ql <-
   study_region.bb %>% opq() %>% 
   add_osm_feature(key = "highway")
 
+city.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "admin_level", value = "6")
+
 boundary.ql <- 
   study_region.bb %>% opq() %>% 
   add_osm_feature(key = "admin_level", value = "10")
@@ -44,10 +48,11 @@ amenity.ql <-
   study_region.bb %>% opq() %>% 
   add_osm_feature(key = "amenity")
 
-building.sf     <- building.ql %>% osmdata_sf()
-road.sf         <- road.ql %>% osmdata_sf()
-boundary.sf     <- boundary.ql %>% osmdata_sf()
-amenity.sf      <- amenity.ql %>% osmdata_sf()
+building.sf     <- building.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+road.sf         <- road.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+boundary.sf     <- boundary.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+city.sf         <- city.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+amenity.sf      <- amenity.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
 mc_point.sf     <- st_as_sf(st_sample(building.sf$osm_polygons, 1000))
 
 httr::set_config(httr::config(ssl_verifypeer = TRUE))
@@ -69,7 +74,7 @@ amenity_point.sf <- amenity.sf$osm_points %>%
   filter(!is.na(amenity)) %>% spread(key = amenity_key, value = value, fill = FALSE)
 
 ggplot() + 
-  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = boundary.sf$osm_multipolygons) +
   geom_sf(data = building.sf$osm_polygons) +
   geom_sf(data = road.sf$osm_lines) +
   geom_sf(data = amenity_point.sf, aes(group = amenity, colour = amenity)) +
@@ -86,11 +91,11 @@ mc_point_params.sf <- aggregate(
   amenity_point.sf,
   mc_point.sf,
   FUN = function(x) sum(as.logical(x), na.rm = TRUE),
-  join = function(x, y) st_is_within_distance(x, y, dist = 500)
+  join = function(x, y) st_is_within_distance(x, y, dist = 300)
 ) %>% filter(!is.na(amenity))
 
 ggplot() +
-  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = boundary.sf$osm_multipolygons) +
   geom_sf(data = building.sf$osm_polygons) +
   geom_sf(data = road.sf$osm_lines) +
   geom_sf(data = amenity.sf$osm_points %>% filter(amenity == "bank"), col = "red") +
@@ -99,37 +104,36 @@ ggplot() +
   scale_size_continuous(guide = "none")
 
 ggplot() +
-  # geom_sf(data = boundary.sf$osm_multipolygons) +
+  geom_sf(data = boundary.sf$osm_multipolygons) +
   geom_sf(data = building.sf$osm_polygons) +
   geom_sf(data = road.sf$osm_lines) +
   geom_sf(data = amenity_point.sf %>% filter(!bank), aes(group = amenity, colour = amenity)) +
-  geom_sf(data = mc_point_params.sf, aes(size = bank), col = "red") +
+  geom_sf(data = mc_point_params.sf, aes(alpha = bank, size = bank), col = "red") +
   scale_colour_viridis_d()
 ```
 
 ## Methods
 
-<!-- ```{r, warning=FALSE} -->
-<!-- variogram <- variogram(bank ~ 1, mc_point_params.sf %>% filter(!is.na(bank))) -->
-<!-- variogram.model <- fit.variogram(v, vgm("Sph")) -->
-<!-- variogram.predicted <- variogramLine(v.m, maxdist = max(v$dist)) -->
+```{r, warning=FALSE}
+variogram <- variogram(bank ~ 1, mc_point_params.sf %>% filter(!is.na(bank)))
+variogram.model <- fit.variogram(variogram, vgm("Ste"))
+variogram.predicted <- variogramLine(variogram.model, maxdist = max(variogram$dist))
 
-<!-- ggplot(variogram, aes(x = dist, y = gamma)) + -->
-<!--   geom_point() + -->
-<!--   geom_line(data = variogram.predicted, col = "blue") + -->
-<!--   labs(x = "distance", y = "semivariance") -->
+ggplot(variogram, aes(x = dist, y = gamma)) +
+  geom_point() +
+  geom_line(data = variogram.predicted, col = "blue") +
+  labs(x = "distance", y = "semivariance")
 
-<!-- st_bbox(boundary.sf$osm_multipolygons) %>% -->
-<!--   st_as_stars(dx = 10000) %>% st_crop(study_region.sf$osm_multipolygons) -> tangina -->
+city.rs <- city.sf$osm_multipolygons %>% st_rasterize()
 
-<!-- k = krige( -->
-<!--   bank ~ 1, mc_point_params.sf %>% st_set_crs("EPSG:4326"),  -->
-<!--   tangina %>% st_set_crs("EPSG:4326"), variogram.model -->
-<!-- ) -->
+k = krige(
+  bank ~ 1, mc_point_params.sf %>% st_set_crs("EPSG:4326"),
+  city.rs %>% st_set_crs("EPSG:4326"), variogram.model
+)
 
-<!-- ggplot() + geom_stars(data = k, aes(fill = var1.pred, x = x, y = y)) +  -->
-<!--     geom_sf(data = st_cast(study_region.sf, "MULTILINESTRING")) -->
-<!-- ``` -->
+ggplot() + geom_stars(data = k, aes(fill = var1.pred, x = x, y = y)) +
+  geom_sf(data = st_cast(city.sf$osm_multipolygons, "MULTILINESTRING"))
+```
 
 ## Results and Discussion
 
