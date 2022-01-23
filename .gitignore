@@ -41,7 +41,6 @@ vignettes/*.pdf
 # Miscellaneous
 # *.csv
 # *.xlsx
-*.html
 *.DS_Store
 # *.png
 # *.jpg

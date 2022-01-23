@@ -1,0 +1,362 @@
+---
+title: "Mapping Bank Branch Density in the City of Makati Given Economic Points of Interest"
+subtitle: "A study submitted in partial fulfillment of the requirements of Statistics 276, 1st Semester AY 2021-2022"
+author: "Lino M. Licuanan"
+date: "12/28/2021"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+# Introduction
+
+With the increasing rate of adoption of fully digital banking over recent years in the Philippines, traditional banks are at high risk of disruption, and with good reason -- digital banks are cheaper to operate and therefore offer higher returns to the average Filipino. Despite this consumer benefit however, the financial ecosystem will never lose a place for physical banking. The Bangko Sentral ng Pilipinas (2019) reported that though mobile phone ownership is at 75% of the adult population, only 12% of them use their phones to perform financial transactions. Reasons cited are lack of awareness, lack of trust, weak internet connectivity, and preference for physical banking.
+
+A world without physical banking would lead to reduced competition and even less access to financial services. Traditional banks, therefore, need to operate with greater precision to maximize profitability -- or else, risk obsoletion. This study focuses on providing recommendations to the decision makers of traditional banks on how to strategically place new branches given a certain area's level of economic activity. Potentially, the same model developed can be used on different regions where physical banking is underdeveloped so that traditional banks can measure the viability of branch placement in a data-driven manner.
+
+The city of Makati is utilized as a case study, given its economic maturity relative to peers and diversity of urban land use. Geographic information from OpenStreetMap is leveraged for this purpose.
+
+# Review of Related Literature
+
+Numerous studies have used remote sensing or OpenStreetMap crowdsourced geographic information to model natural or social phenomena, to varying degrees of success. For example, there is a wealth of new literature on producing accurate representations of geographic traffic accident risk using machine learning on highly ubiquitous geographic data (to varying degrees of success). The primary challenge faced by these studies is sparsity – making resolutions too small leads to low accident rates and consequently, difficulty in measuring the true risk. 
+
+Najjar et al. (2017) approached this problem by reducing resolutions to 150-meters. Within the context of traffic accidents though, this has been found to substantially increase model bias; a couple meters could spell the difference between a high volume major intersection and an alley. In areas of study where incidences are sufficiently high, this approach may make sense. The study of Najjar et al. (2017) empirically validated their transfer learning-based approach as having an accuracy of 78% for New York city. The researchers themselves, however, suggest that their model may not fare as well in dramatically different environments such as cities in developing countries. Nonetheless, this research paved the way for the use of satellite imagery in detecting highly complex features.
+
+In response to the shortcomings of low resolution studies, He et al. (2021) inferred traffic accident risk maps with an extremely high resolution of 5-meters by leveraging satellite imagery, GPS trajectories, road maps, and historical accident history supervised against “future” accidents occurring after a time t – most of which are information-rich and more importantly, publicly accessible. 
+
+As rationalized by the law of large numbers, estimation is difficult when observed trials are low. This is addressed by the researchers by employing an end-to-end deep net that can recognize with high precision the similarities across different sections of road, regardless of whether or not accidents actually occur in the area. Accident risk is predicted at every 5x5 meter grid of various US cities: Los Angeles, New York City, Boston, and Chicago. 
+Deep models are trained on various subsets of variables to simulate the approach’s effectiveness even in situations where information is incomplete. Convoluted neural network and ResNet-18 encoding is applied on satellite input and GPS features to enable transfer learning procedures that produce an understanding of what objects constitute the area of observation. 
+
+In an effort to make their findings directly comparable with similar studies, He et al. (2021) evaluated their deep learning models using average precision and RMSE measures. This was measured against theoretical upper-bounds of other research, produced by replicating their model at lower resolutions of 100m, 200m, and 500m. Through this, they were able to conclude that their 5m resolution model outperforms that of 100m resolution by 17.74 points on the AP metric and 12.8% on the RMSE metric, when historical data is a feature. Through evaluating different sets of features on different cities, the research was also able to validate the issues caused by sparsity – models that took more inputs worked best in cities with high observed traffic accident densities, and vice versa.
+
+In the Philippines, there has been no noteworthy attempt yet of mapping bank branch density geographically, even in the country’s major metropolitan areas. There have, however, been numerous studies exploiting remote sensing and machine learning to estimate information that would have been highly costly to collect otherwise. 
+
+Through a study supported by the UNICEF Innovation Fund, Tingzon et al. (2019) estimated poverty distribution across the Philippines from methodologies using a mix of publicly available OpenStreetMap geographic data, Google Earth Engine satellite images, and nighttime luminosity data from the Visible Infrared Imaging Radiometer Suite Day/Night Band (VIIRS DNB). The socioeconomic indicators modeled were wealth level, years of education, access to electricity, and access to water.
+
+Using this data, the researchers explore two methodologies: a deep learning-based model and random forest-based regression model. The former explored a state-of-the-art approach that used nighttime luminosity as a proxy for economic activity and satellite images of the country as input to a convolutional neural network pre-trained on the ImageNet database to recognize objects found on satellite images to be used as additional features. Once performed, these cluster-level features were then used as input to a ridge regression model for predicting geographic poverty levels against ground-truth data from the 2017 National Demographic Health Survey.
+
+As the researchers’ aim was to find a cost-effective means to estimating poverty, a simpler approach was also explored that employed crowdsourced and free-to-use geographic information from OpenStreetMap (OSM), rather than the former methodology which required use of proprietary information that cost the researchers approximately USD 3,000. From OSM, a rich set of features comprising roads, buildings, and points of interest (POIs) were used to model the same target, with the same ground-truth data as the previous methodology.
+
+The findings were surprisingly similar – the best models for wealth index yielded an r-squared score of 0.63 and 0.59 for the deep learning-based model and random forest-based regression model, respectively. A model using roads, buildings, and POIs alone was able to explain 49-55% of the variance. This supports the argument that using geographic information, even crowdsourced ones, can have substantial predictive power even when applied to the Philippine context, which has seen very little research and discourse around geospatial studies relative to developed nations. 
+
+A separate study by Thinking Machines (2020) based on open datasets by the Facebook Connectivity Lab estimated percentage completeness as high as 90% for the National Capital Region (NCR), albeit at high variance nationwide – the lower end of the spectrum registered just 2% completeness. Though there is definitely promise in using crowdsourced data for estimating socioeconomic phenomena, one cannot completely rule out the coverage remote sensing can provide for areas that have not been penetrated by volunteer mappers just yet.
+
+# Data and Preprocessing 
+
+```{r, warning=FALSE}
+
+suppressPackageStartupMessages({
+  library(osmdata)
+  library(tidyverse)
+  library(sf)
+  library(tmap)
+  library(gstat)
+  library(stars)
+  library(magrittr)
+  library(ggpubr)
+  library(spdep)
+})
+
+httr::set_config(httr::config(ssl_verifypeer = FALSE))
+
+study_region.bb <- getbb("Makati", format_out = "polygon") %>% head(1)
+
+building.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "building")
+
+road.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "highway")
+
+city.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "admin_level", value = "6")
+
+boundary.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "admin_level", value = "10")
+
+amenity.ql <- 
+  study_region.bb %>% opq() %>% 
+  add_osm_feature(key = "amenity")
+
+building.sf     <- building.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+road.sf         <- road.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+boundary.sf     <- boundary.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+city.sf         <- city.ql %>% osmdata_sf() %>% trim_osmdata(study_region.bb)
+# left untrimmed to factor in edge correction
+amenity.sf      <- amenity.ql %>% osmdata_sf()
+# only randomly sample in areas where there is a known building
+set.seed(2022)
+mc_point.sf     <- st_as_sf(st_sample(city.sf$osm_multipolygons, 22 * 16))
+
+httr::set_config(httr::config(ssl_verifypeer = TRUE))
+
+amenity_point.sf <- amenity.sf$osm_points %>% 
+  transmute(
+    amenity = case_when(
+      amenity == "bank" ~ "bank",
+      amenity %in% c("restaurant", "fast_food") ~ "restaurant",
+      amenity %in% c("bar", "pub", "gambling", "nightclub", "casino") ~ "bar",
+      amenity %in% c("bus_station", "taxi", "ferry_terminal") ~ "terminal",
+      amenity %in% c("clinic", "hospital", "doctors", "dentist") ~ "hc_facility",
+      amenity == "pharmacy" ~ "pharmacy",
+      amenity %in% c("school", "college") ~ "school",
+      amenity == "place_of_worship" ~ "place_of_worship",
+      TRUE ~ NA_character_
+    ), value = TRUE
+  ) %>% mutate(amenity_key = amenity) %>% 
+  filter(!is.na(amenity)) %>% spread(key = amenity_key, value = value, fill = FALSE)
+
+mc_point_params.sf <- aggregate(
+  amenity_point.sf,
+  mc_point.sf,
+  FUN = function(x) sum(as.logical(x), na.rm = TRUE),
+  join = function(x, y) st_is_within_distance(x, y, dist = 250)
+) %>% filter(!is.na(amenity))
+```
+
+OpenStreetMap is a collaborative project to create a free editable geographic database of the world. Contributions are made entirely by volunteers, with high participation from both the public and private sectors.
+
+If interested in the underlying code, simply select the "code" button on the upper right over every block.
+
+```{r, warning=FALSE}
+city.sf$osm_multipolygons %>% st_area()
+```
+
+The study region is the city of Makati, an administrative region in Metro Manila covering 21.8 sq. kilometers. Data on points of interest were grouped into broad categories (e.g. restaurants, healthcare facilities). Factoring in edge correction, model features were extracted from a rectangular bounding box with sufficient padding. To paint an example, numerous points of interest from the city of Taguig still have bearing on the study despite being outside the study region.
+
+The predictors and target variable are the number of points of interest and bank branches, respectively, within walking distance of a measurement point (arbitrarily set as a 250-meter radius). Technically speaking, this can be extracted with good precision at high resolutions. However, to simulate the conditions other researchers might realistically face when replicating this methodology in less mapped areas, we randomly select 352 points as training set (roughly 16 points for every sq. kilometer).
+
+```{r, warning=FALSE}
+ggplot() + 
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity_point.sf, aes(group = amenity, colour = amenity), alpha = 0.8) +
+  scale_colour_viridis_d() +
+  scale_size_continuous(guide = "none") + 
+  labs(
+    title = "Points of Interest in the City of Makati, Philippines", 
+    caption = "Data from OpenStreetMap"
+  )
+
+amenity_point.sf %>% group_by(amenity) %>% count() %>% arrange(desc(n))
+```
+
+The table above describes the observed frequency per group of point of interest. Restaurants are by far the most well-represented.
+
+```{r, warning=FALSE}
+ggplot() +
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity.sf$osm_points %>% filter(amenity == "bank"), col = "red", alpha = 0.8) +
+  geom_sf(data = mc_point_params.sf, aes(colour = bank, size = bank)) +
+  scale_colour_viridis_c() +
+  scale_size_continuous(guide = "none") +
+  scale_alpha_continuous(guide = "none") + 
+  labs(
+    title = "Bank Branches in the City of Makati, Philippines", 
+    caption = "Randomly scattered points of measurement places, counting bank branches within 250-m radius."
+  )
+```
+
+Indicated in red above, the 352 monte carlo simulated points are outfitted with the number of bank branches found within 250 meters of it. Inspection of the above plot confirms that data transformations are working as expected.
+
+```{r, warning=FALSE}
+ggplot() +
+  geom_sf(data = building.sf$osm_polygons) +
+  geom_sf(data = road.sf$osm_lines) +
+  geom_sf(data = amenity_point.sf %>% filter(!bank), 
+          aes(group = amenity, colour = amenity),
+          alpha = 0.8) +
+  geom_sf(data = mc_point_params.sf, aes(alpha = bank, size = bank), col = "red") +
+  scale_colour_viridis_d() + 
+  labs(
+    title = "Points of Interest and Bank Density in the City of Makati, Philippines", 
+    caption = "Bank density measured by counting bank branches within 250-m radius."
+  )
+```
+
+Putting together the features and target of the training set, the above plot is generated. Just from visual inspection, areas with high densities of restaurants seem to also have high densities of bank branches. This is most apparent in the central business district area. 
+
+# Methods
+
+```{r, warning=FALSE}
+variogram <- variogram(
+  bank ~ restaurant + bar + terminal + hc_facility + pharmacy + school + place_of_worship, 
+  mc_point_params.sf %>% filter(!is.na(bank))
+)
+variogram.model <- fit.variogram(variogram, vgm("Ste"))
+variogram.predicted <- variogramLine(variogram.model, maxdist = max(variogram$dist))
+
+city.rs <- city.sf$osm_multipolygons %>% st_rasterize()
+
+city_params.sf <- aggregate(
+  amenity_point.sf,
+  st_as_sf(city.rs),
+  FUN = function(x) sum(as.logical(x), na.rm = TRUE),
+  join = function(x, y) st_is_within_distance(x, y, dist = 250)
+) %>% filter(!is.na(amenity))
+
+city_params.rs <- city_params.sf %>% st_rasterize()
+
+k = krige(
+  bank ~ restaurant + bar + terminal + hc_facility + pharmacy + school + place_of_worship, 
+  mc_point_params.sf %>% st_set_crs("EPSG:4326"),
+  city_params.rs %>% st_set_crs("EPSG:4326"), variogram.model
+)
+```
+
+```{r}
+variogram_c <- variogram(
+  bank ~ 1, 
+  mc_point_params.sf %>% filter(!is.na(bank))
+)
+variogram.model_c <- fit.variogram(variogram_c, vgm("Ste"))
+variogram.predicted_c <- variogramLine(variogram.model_c, maxdist = max(variogram_c$dist))
+
+k_c = krige(
+  bank ~ 1, 
+  mc_point_params.sf %>% st_set_crs("EPSG:4326"),
+  city_params.rs %>% st_set_crs("EPSG:4326"), variogram.model_c
+)
+```
+
+Two models are to be evaluated: ordinary kriging and universal kriging. The former is utilized to generate a baseline for succeeding models, whereas the latter is hypothesized to be highly predictive of bank branch density and is controlled on derived counts of all point of interest features.
+
+To empirically measure model performance, the training model is to be evaluated against the actual counts of bank branches per cell on a generated grid of Makati using root mean square error (RMSE).
+
+# Results and Discussion
+
+```{r}
+predicted_vplot <- ggplot(variogram, aes(x = dist, y = gamma)) +
+  geom_point() +
+  geom_line(data = variogram.predicted, col = "blue") +
+  labs(x = "distance", y = "semivariance") +
+  labs(subtitle = "Predicted - Universal")
+
+predicted_vplot_c <- ggplot(variogram_c, aes(x = dist, y = gamma)) +
+  geom_point() +
+  geom_line(data = variogram.predicted_c, col = "blue") +
+  labs(x = "distance", y = "semivariance") + 
+  labs(subtitle = "Predicted - Ordinary")
+
+ggarrange(
+  predicted_vplot, predicted_vplot_c,
+  ncol = 2, nrow = 1,
+  font.label = list(size = 8),
+  common.legend = TRUE,
+  legend = "bottom"
+) %>% 
+  annotate_figure(
+    top = text_grob(
+      "Variogram Model for Bank Density in Makati, Philippines", 
+      face = "bold", size = 9
+    ))
+```
+
+Variogram models are fit in preparation for kriging. We find that fit is best for both our universal and ordinary kriging models when a Stein model is fit, a different parameterization of the Matern model. From visual inspection as well, we find that our universal kriging variogram model outperforms that of ordinary kriging. 
+
+Looking at the universal kriging variogram model, there is evidence to suggest that our data possesses spatial autocorrelation.
+
+```{r}
+predicted <- ggplot() + 
+  geom_stars(data = k %>% mutate(bank = var1.pred), aes(fill = bank, x = x, y = y)) +
+  scale_fill_continuous(na.value = NA, low = "dark blue", high = "red") +
+  lims(x = c(120.9987708, 121.0675029), y = c(14.5296336, 14.5794322)) +
+  labs(subtitle = "Predicted - Universal")
+
+predicted_c <- ggplot() + 
+  geom_stars(data = k_c %>% mutate(bank = var1.pred), aes(fill = bank, x = x, y = y)) +
+  scale_fill_continuous(na.value = NA, low = "dark blue", high = "red") +
+  lims(x = c(120.9987708, 121.0675029), y = c(14.5296336, 14.5794322)) +
+  labs(subtitle = "Predicted - Ordinary")
+
+actual <- ggplot() + 
+  geom_stars(data = city_params.rs, aes(fill = bank, x = x, y = y)) +
+  scale_fill_continuous(na.value = NA, low = "dark blue", high = "red") +
+  lims(x = c(120.9987708, 121.0675029), y = c(14.5296336, 14.5794322)) + 
+  labs(subtitle = "Actual")
+
+set_theme <- theme(
+  axis.text.x  = element_blank(),
+  axis.text.y  = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.ticks.y = element_blank(),
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+)
+
+ggarrange(
+  predicted + set_theme, predicted_c + set_theme, actual + set_theme,
+  ncol = 2, nrow = 2,
+  font.label = list(size = 8),
+  common.legend = TRUE,
+  legend = "bottom"
+) %>% 
+  annotate_figure(
+    top = text_grob(
+      "Bank Density in the city of Makati, Philippines", 
+      face = "bold", size = 9
+    ))
+```
+
+Predicted values from our universal and ordinary Kriging models are plotted against actual bank branch density. We find striking similaries across the three plots, suggesting good model fit.
+
+```{r, warning=FALSE}
+predicted.dt <- k %>% as_tibble() %>% 
+  filter(!is.na(var1.pred)) %>% 
+  mutate(predicted = var1.pred)
+predicted_c.dt <- k_c %>% as_tibble() %>% 
+  filter(!is.na(var1.pred)) %>% 
+  mutate(predicted = var1.pred)
+actual.dt <- city_params.rs %>% as_tibble() %>% 
+  filter(!is.na(bank)) %>% 
+  mutate(actual = bank)
+evaluation.dt <- predicted.dt %>% 
+  inner_join(actual.dt, by = c("x" = "x", "y" = "y"))
+evaluation_c.dt <- predicted_c.dt %>% 
+  inner_join(actual.dt, by = c("x" = "x", "y" = "y"))
+
+evaluation.dt %>% 
+  mutate(se = (actual - predicted)^2) %>% 
+  # group_by(round(actual/5)*5) %>% 
+  summarise(sqrt(mean(se)))
+
+evaluation_c.dt %>% 
+  mutate(se = (actual - predicted)^2) %>% 
+  # group_by(round(actual/5)*5) %>% 
+  summarise(sqrt(mean(se)))
+```
+
+We test this empirically by obtaining both models' RMSE. We find it to be 2.55 and 5.34 for the universal and ordinary kriging models, respectively. This gives us strong evidence to suggest economic points of interest are indeed highly predictive of bank branch density, and ergo an area's inherent profit potential.
+
+```{r}
+evaluation.dt %>% 
+  mutate(se = (actual - predicted)^2) %>% 
+  group_by(round(actual/5)*5) %>%
+  summarise(sqrt(mean(se)))
+```
+
+To further illustrate how this fares in absolute terms, RMSE is calculated per groups of grids binned by 5 walking-distance banks. In the absence of benchmarks from other studies, we assess in absolute terms that RMSE is within reasonable bounds.
+
+# Conclusions
+
+There is sufficient evidence to conclude that economic points of interest are a strong indicator of bank density, which is our proxy for an area's conduciveness for physical branches. The study shows spatial interpolation via Kriging is one means to achieve this. These results have significant room to be improved, especially given that very few data points were used to train the model and the large amount of geographic data readily available. 
+
+The hope is that the model is strong enough to predict conduciveness for physical branches even in regions with very low banking penetration, where traditional banking may still yet play a part in greater financial inclusion.
+
+# References
+
+Najjar, A., et al. (2017). Combining Satellite Imagery and Open Data to Map Road Safety. Proceedings of the AAAI Conference on Artificial Intelligence, 31(17).
+
+Songtao, H., et al. (2021). Inferring High-Resolution Traffic Accident Risk Maps Based on Satellite Imagery and GPS Trajectories. CVF Open Access. Retrieved December 31, 2021, from https://openaccess.thecvf.com/content/ICCV2021/papers/He_Inferring_High-Resolution_Traffic_Accident_Risk_Maps_Based_on_Satellite_Imagery_ICCV_2021_paper.pdf
+
+Thinking Machines Data Science Inc. (2019, March 12). Huge areas of PHL are still missing from OpenStreetMap, satellite data reveals. Data Stories. Retrieved December 31, 2021, from https://stories.thinkingmachin.es/mapthegap/
+
+Tingzon, I., et al. (2019). Mapping Poverty in the Philippines Using Machine Learning, Satellite Imagery, and Crowd-sourced Geospatial Information. AI for Social Good. Retrieved December 31, 2021, from https://aiforsocialgood.github.io/icml2019/accepted/track1/pdfs/7_aisg_icml2019.pdf
+
+
