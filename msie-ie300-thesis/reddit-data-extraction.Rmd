@@ -1,0 +1,21 @@
+---
+title: "Reddit Data Extraction"
+author: "Lino Licuanan"
+date: "1/30/2022"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+## Setup
+
+```{r, warning=FALSE}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(RedditExtractoR)
+})
+```
+
+## Exploration
