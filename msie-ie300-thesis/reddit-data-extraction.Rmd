@@ -49,7 +49,7 @@ user_content.dt <- thread_with_content.dt %>% head(2) %$%
 #   pmap(list(about, comments, threads), function(about, comments, threads) {
 #     browser()
 #   })
-# )
+# ) 
 
 ```
 
